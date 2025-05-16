@@ -1,268 +1,229 @@
+You said:
 #!/bin/bash
 
 # Employee Attendance Tracker
-# Created: May 7, 2025
-# Description: A shell script to track employee attendance using dialog boxes
+# A dialog-based shell script for tracking employee attendance
 
-# Check if dialog is installed
-if ! command -v dialog &> /dev/null; then
-    echo "Dialog is not installed. Please install dialog using:"
-    echo "sudo apt-get install dialog"
-    exit 1
-fi
-
-# Set up paths to data files
-BASE_DIR=~/Desktop/EmployeeAttendanceTracker
+# Define paths for CSV files
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"
 DATA_DIR="$BASE_DIR/data"
 EMPLOYEES_CSV="$DATA_DIR/employees.csv"
 ATTENDANCE_CSV="$DATA_DIR/attendance.csv"
 
-# Create necessary directories and files if they don't exist
+# Create directories if they don't exist
 mkdir -p "$DATA_DIR"
 
-# Initialize employees.csv with header if it doesn't exist
-if [ ! -f "$EMPLOYEES_CSV" ]; then
-    echo "EmployeeID,Name,Department,JoiningDate" > "$EMPLOYEES_CSV"
+# Check if dialog is installed
+if ! command -v dialog &> /dev/null; then
+    echo "dialog package is not installed. Please install it first."
+    echo "For Debian/Ubuntu: sudo apt-get install dialog"
+    echo "For Red Hat/CentOS: sudo yum install dialog"
+    exit 1
 fi
 
-# Initialize attendance.csv with header if it doesn't exist
-if [ ! -f "$ATTENDANCE_CSV" ]; then
-    echo "Date,EmployeeID,Status" > "$ATTENDANCE_CSV"
-fi
+# Initialize CSV files if they don't exist
+initialize_files() {
+    # Create employees.csv if it doesn't exist
+    if [ ! -f "$EMPLOYEES_CSV" ]; then
+        echo "Employee_ID,Name,Department,Joining_Date" > "$EMPLOYEES_CSV"
+        chmod 644 "$EMPLOYEES_CSV"
+    fi
 
-# Function to generate a unique employee ID
-generate_employee_id() {
-    if [ ! -f "$EMPLOYEES_CSV" ] || [ $(wc -l < "$EMPLOYEES_CSV") -eq 1 ]; then
-        echo "EMP1001"
-    else
-        last_id=$(tail -n 1 "$EMPLOYEES_CSV" | cut -d ',' -f 1 | tr -d 'EMP')
-        next_id=$((last_id + 1))
-        echo "EMP$next_id"
+    # Create attendance.csv if it doesn't exist
+    if [ ! -f "$ATTENDANCE_CSV" ]; then
+        echo "Date,Employee_ID,Status" > "$ATTENDANCE_CSV"
+        chmod 644 "$ATTENDANCE_CSV"
     fi
 }
 
-# Function to check if employee exists
-employee_exists() {
-    local emp_id="$1"
-    grep -q "^$emp_id," "$EMPLOYEES_CSV"
-    return $?
+# Function to show error message
+show_error() {
+    dialog --title "Error" --msgbox "$1" 8 40
+}
+
+# Function to show success message
+show_success() {
+    dialog --title "Success" --msgbox "$1" 8 40
 }
 
 # Function to validate date format (YYYY-MM-DD)
 validate_date() {
-    local date_input="$1"
-    if [[ "$date_input" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-        return 0
-    else
+    if [[ ! "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
         return 1
     fi
+    
+    # Further validation can be added here if needed
+    return 0
+}
+
+# Function to validate employee ID (numeric)
+validate_employee_id() {
+    if [[ ! "$1" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Function to check if employee ID exists
+check_employee_exists() {
+    local id=$1
+    grep -q "^$id," "$EMPLOYEES_CSV"
+    return $?
 }
 
 # Function to add a new employee
 add_employee() {
-    # Use dialog to get employee details
-    tempfile=$(mktemp)
+    # Get employee details using dialog
+    employee_id=$(dialog --title "Add Employee" --inputbox "Enter Employee ID (numeric):" 8 40 2>&1 >/dev/tty)
     
-    dialog --title "Add New Employee" \
-           --form "Enter Employee Details:" 15 60 3 \
-           "Name:" 1 1 "" 1 20 30 0 \
-           "Department:" 2 1 "" 2 20 30 0 \
-           "Joining Date (YYYY-MM-DD):" 3 1 "" 3 20 30 0 \
-           2> "$tempfile"
-    
+    # Check if canceled
     if [ $? -ne 0 ]; then
-        rm -f "$tempfile"
         return
     fi
     
-    # Read form values
-    name=$(sed -n '1p' "$tempfile")
-    department=$(sed -n '2p' "$tempfile")
-    joining_date=$(sed -n '3p' "$tempfile")
-    
-    # Validate inputs
-    if [ -z "$name" ] || [ -z "$department" ] || [ -z "$joining_date" ]; then
-        dialog --title "Error" --msgbox "All fields are required!" 8 40
-        rm -f "$tempfile"
+    # Validate Employee ID
+    if ! validate_employee_id "$employee_id"; then
+        show_error "Invalid Employee ID. Please enter a numeric value."
         return
     fi
+    
+    # Check if employee ID already exists
+    if grep -q "^$employee_id," "$EMPLOYEES_CSV"; then
+        show_error "Employee ID $employee_id already exists."
+        return
+    fi
+    
+    name=$(dialog --title "Add Employee" --inputbox "Enter Employee Name:" 8 40 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
+    
+    department=$(dialog --title "Add Employee" --inputbox "Enter Department:" 8 40 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
+    
+    joining_date=$(dialog --title "Add Employee" --inputbox "Enter Joining Date (YYYY-MM-DD):" 8 40 "$(date +%Y-%m-%d)" 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
     
     # Validate date format
     if ! validate_date "$joining_date"; then
-        dialog --title "Error" --msgbox "Invalid date format. Please use YYYY-MM-DD." 8 50
-        rm -f "$tempfile"
+        show_error "Invalid date format. Please use YYYY-MM-DD."
         return
     fi
-    
-    # Generate employee ID
-    emp_id=$(generate_employee_id)
     
     # Add employee to CSV
-    echo "$emp_id,$name,$department,$joining_date" >> "$EMPLOYEES_CSV"
+    echo "$employee_id,$name,$department,$joining_date" >> "$EMPLOYEES_CSV"
     
-    dialog --title "Success" --msgbox "Employee added successfully!\nEmployee ID: $emp_id" 8 50
-    
-    rm -f "$tempfile"
+    show_success "Employee added successfully."
 }
 
-# Function to update employee details
+# Function to update an employee
 update_employee() {
     # First, let the user select an employee ID
-    select_employee_id
-    
-    # Check if employee was selected
-    if [ ! -f "/tmp/employee_id_selected.tmp" ]; then
+    if [ ! -s "$EMPLOYEES_CSV" ] || [ $(wc -l < "$EMPLOYEES_CSV") -le 1 ]; then
+        show_error "No employees found."
         return
     fi
     
-    emp_id=$(cat /tmp/employee_id_selected.tmp)
-    rm -f /tmp/employee_id_selected.tmp
+    # Create a temporary file for the employee list
+    temp_file=$(mktemp)
+    tail -n +2 "$EMPLOYEES_CSV" | awk -F, '{print $1 " - " $2 " (" $3 ")"}' > "$temp_file"
     
-    if [ -z "$emp_id" ]; then
-        return
-    fi
+    # Ask user to select an employee
+    employee_selection=$(dialog --title "Update Employee" --menu "Select an employee to update:" 15 60 8 --file "$temp_file" 2>&1 >/dev/tty)
+    rm "$temp_file"
     
-    # Get current details of the employee
-    employee_data=$(grep "^$emp_id," "$EMPLOYEES_CSV")
-    current_name=$(echo "$employee_data" | cut -d ',' -f 2)
-    current_dept=$(echo "$employee_data" | cut -d ',' -f 3)
-    current_joining_date=$(echo "$employee_data" | cut -d ',' -f 4)
-    
-    # Use dialog to get updated details
-    tempfile=$(mktemp)
-    
-    dialog --title "Update Employee" \
-           --form "Update Employee Details for $emp_id:" 15 60 3 \
-           "Name:" 1 1 "$current_name" 1 20 30 0 \
-           "Department:" 2 1 "$current_dept" 2 20 30 0 \
-           "Joining Date (YYYY-MM-DD):" 3 1 "$current_joining_date" 3 20 30 0 \
-           2> "$tempfile"
-    
+    # Check if canceled
     if [ $? -ne 0 ]; then
-        rm -f "$tempfile"
         return
     fi
     
-    # Read form values
-    name=$(sed -n '1p' "$tempfile")
-    department=$(sed -n '2p' "$tempfile")
-    joining_date=$(sed -n '3p' "$tempfile")
+    # Extract employee ID from selection
+    employee_id=$(echo "$employee_selection" | cut -d' ' -f1)
     
-    # Validate inputs
-    if [ -z "$name" ] || [ -z "$department" ] || [ -z "$joining_date" ]; then
-        dialog --title "Error" --msgbox "All fields are required!" 8 40
-        rm -f "$tempfile"
-        return
-    fi
+    # Get current employee data
+    employee_data=$(grep "^$employee_id," "$EMPLOYEES_CSV")
+    current_name=$(echo "$employee_data" | awk -F, '{print $2}')
+    current_department=$(echo "$employee_data" | awk -F, '{print $3}')
+    current_joining_date=$(echo "$employee_data" | awk -F, '{print $4}')
+    
+    # Get updated details
+    name=$(dialog --title "Update Employee" --inputbox "Enter New Name:" 8 40 "$current_name" 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
+    
+    department=$(dialog --title "Update Employee" --inputbox "Enter New Department:" 8 40 "$current_department" 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
+    
+    joining_date=$(dialog --title "Update Employee" --inputbox "Enter New Joining Date (YYYY-MM-DD):" 8 40 "$current_joining_date" 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
     
     # Validate date format
     if ! validate_date "$joining_date"; then
-        dialog --title "Error" --msgbox "Invalid date format. Please use YYYY-MM-DD." 8 50
-        rm -f "$tempfile"
+        show_error "Invalid date format. Please use YYYY-MM-DD."
         return
     fi
     
     # Update employee in CSV
-    sed -i "s|^$emp_id,.*$|$emp_id,$name,$department,$joining_date|" "$EMPLOYEES_CSV"
+    sed -i "s|^$employee_id,.*|$employee_id,$name,$department,$joining_date|" "$EMPLOYEES_CSV"
     
-    dialog --title "Success" --msgbox "Employee details updated successfully!" 8 50
-    
-    rm -f "$tempfile"
-}
-
-# Function to select an employee ID
-select_employee_id() {
-    # Check if there are employees
-    if [ $(wc -l < "$EMPLOYEES_CSV") -eq 1 ]; then
-        dialog --title "Error" --msgbox "No employees found in the database!" 8 40
-        return 1
-    fi
-    
-    # Create temporary files for dialog menu
-    tempfile=$(mktemp)
-    options_file=$(mktemp)
-    
-    # Create options for dialog menu from employees.csv
-    tail -n +2 "$EMPLOYEES_CSV" | awk -F, '{print $1 " " $2 " (" $3 ")"}' > "$options_file"
-    
-    # Count number of options
-    option_count=$(wc -l < "$options_file")
-    
-    # Display dialog menu for selecting employee
-    dialog --title "Select Employee" \
-           --menu "Choose an employee:" 20 60 $option_count \
-           $(cat "$options_file") \
-           2> "$tempfile"
-    
-    # Check if user canceled
-    if [ $? -ne 0 ]; then
-        rm -f "$tempfile" "$options_file"
-        return 1
-    fi
-    
-    # Extract selected employee ID
-    selected_id=$(cat "$tempfile" | cut -d ' ' -f 1)
-    echo "$selected_id" > /tmp/employee_id_selected.tmp
-    
-    rm -f "$tempfile" "$options_file"
-    return 0
+    show_success "Employee updated successfully."
 }
 
 # Function to delete an employee
 delete_employee() {
     # First, let the user select an employee ID
-    select_employee_id
-    
-    # Check if employee was selected
-    if [ ! -f "/tmp/employee_id_selected.tmp" ]; then
+    if [ ! -s "$EMPLOYEES_CSV" ] || [ $(wc -l < "$EMPLOYEES_CSV") -le 1 ]; then
+        show_error "No employees found."
         return
     fi
     
-    emp_id=$(cat /tmp/employee_id_selected.tmp)
-    rm -f /tmp/employee_id_selected.tmp
+    # Create a temporary file for the employee list
+    temp_file=$(mktemp)
+    tail -n +2 "$EMPLOYEES_CSV" | awk -F, '{print $1 " - " $2 " (" $3 ")"}' > "$temp_file"
     
-    if [ -z "$emp_id" ]; then
+    # Ask user to select an employee
+    employee_selection=$(dialog --title "Delete Employee" --menu "Select an employee to delete:" 15 60 8 --file "$temp_file" 2>&1 >/dev/tty)
+    rm "$temp_file"
+    
+    # Check if canceled
+    if [ $? -ne 0 ]; then
         return
     fi
     
-    # Ask for confirmation
-    dialog --title "Confirm Deletion" \
-           --yesno "Are you sure you want to delete employee $emp_id?" 8 60
+    # Extract employee ID from selection
+    employee_id=$(echo "$employee_selection" | cut -d' ' -f1)
     
+    # Confirm deletion
+    dialog --title "Confirm" --yesno "Are you sure you want to delete this employee? This will also delete all attendance records for this employee." 8 60
     if [ $? -ne 0 ]; then
         return
     fi
     
     # Delete employee from CSV
-    sed -i "/^$emp_id,/d" "$EMPLOYEES_CSV"
+    sed -i "/^$employee_id,/d" "$EMPLOYEES_CSV"
     
-    # Also delete their attendance records
-    sed -i "/,$emp_id,/d" "$ATTENDANCE_CSV"
+    # Also delete all attendance records for this employee
+    sed -i "/^[^,]*,$employee_id,/d" "$ATTENDANCE_CSV"
     
-    dialog --title "Success" --msgbox "Employee and associated attendance records deleted successfully!" 8 60
+    show_success "Employee and associated attendance records deleted successfully."
 }
 
 # Function to view employee list
 view_employee_list() {
-    # Check if there are employees
-    if [ $(wc -l < "$EMPLOYEES_CSV") -eq 1 ]; then
-        dialog --title "Employee List" --msgbox "No employees found in the database!" 8 40
+    if [ ! -s "$EMPLOYEES_CSV" ] || [ $(wc -l < "$EMPLOYEES_CSV") -le 1 ]; then
+        show_error "No employees found."
         return
     fi
     
-    # Create a formatted display of employees
-    tempfile=$(mktemp)
+    # Create a temporary file for the employee list
+    temp_file=$(mktemp)
+    echo -e "ID\tName\tDepartment\tJoining Date" > "$temp_file"
+    echo -e "------------------------------------------------------------" >> "$temp_file"
+    tail -n +2 "$EMPLOYEES_CSV" | awk -F, '{print $1 "\t" $2 "\t" $3 "\t" $4}' >> "$temp_file"
     
-    echo "Employee List:" > "$tempfile"
-    echo "----------------------------------" >> "$tempfile"
-    echo "ID | Name | Department | Joining Date" >> "$tempfile"
-    echo "----------------------------------" >> "$tempfile"
+    # Show the employee list
+    dialog --title "Employee List" --textbox "$temp_file" 20 80
     
-    tail -n +2 "$EMPLOYEES_CSV" | awk -F, '{printf "%-8s | %-15s | %-15s | %s\n", $1, $2, $3, $4}' >> "$tempfile"
-    
-    dialog --title "Employee List" --textbox "$tempfile" 20 80
-    
-    rm -f "$tempfile"
+    # Clean up
+    rm "$temp_file"
 }
 
 # Function to mark attendance
@@ -270,434 +231,483 @@ mark_attendance() {
     # Get today's date
     today=$(date +%Y-%m-%d)
     
-    # First, let the user select an employee ID
-    select_employee_id
+    # Ask for a different date if needed
+    attendance_date=$(dialog --title "Mark Attendance" --inputbox "Enter Date (YYYY-MM-DD):" 8 40 "$today" 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
     
-    # Check if employee was selected
-    if [ ! -f "/tmp/employee_id_selected.tmp" ]; then
+    # Validate date format
+    if ! validate_date "$attendance_date"; then
+        show_error "Invalid date format. Please use YYYY-MM-DD."
         return
     fi
     
-    emp_id=$(cat /tmp/employee_id_selected.tmp)
-    rm -f /tmp/employee_id_selected.tmp
-    
-    if [ -z "$emp_id" ]; then
+    # Check if there are any employees
+    if [ ! -s "$EMPLOYEES_CSV" ] || [ $(wc -l < "$EMPLOYEES_CSV") -le 1 ]; then
+        show_error "No employees found. Please add employees first."
         return
     fi
     
-    # Check if attendance is already marked for today
-    if grep -q "^$today,$emp_id," "$ATTENDANCE_CSV"; then
-        dialog --title "Error" --msgbox "Attendance for $emp_id already marked for today!" 8 60
-        return
-    fi
+    # Create a temporary file for the dialog checklist
+    temp_file=$(mktemp)
     
-    # Ask for attendance status
-    dialog --title "Mark Attendance" \
-           --menu "Select attendance status for $emp_id:" 12 60 2 \
-           "Present" "Mark as Present" \
-           "Absent" "Mark as Absent" \
-           2> /tmp/attendance_status.tmp
+    # Create checklist items with all employees (default: present)
+    while IFS=, read -r id name department joining_date; do
+        # Skip header line
+        if [ "$id" = "Employee_ID" ]; then
+            continue
+        fi
+        
+        # Check if attendance is already marked for this employee on this date
+        current_status=""
+        if grep -q "^$attendance_date,$id," "$ATTENDANCE_CSV"; then
+            current_status=$(grep "^$attendance_date,$id," "$ATTENDANCE_CSV" | cut -d, -f3)
+        fi
+        
+        # Set default status based on current status or default to Present
+        status_flag="on"
+        if [ "$current_status" = "Absent" ]; then
+            status_flag="off"
+        fi
+        
+        echo "$id \"$name\" $status_flag" >> "$temp_file"
+    done < "$EMPLOYEES_CSV"
     
+    # Use dialog to mark attendance with a checklist
+    present_ids=$(dialog --title "Mark Attendance for $attendance_date" --checklist "Select present employees:" 15 60 8 --file "$temp_file" 2>&1 >/dev/tty)
+    
+    # Check if canceled
     if [ $? -ne 0 ]; then
-        rm -f /tmp/attendance_status.tmp
+        rm "$temp_file"
         return
     fi
     
-    status=$(cat /tmp/attendance_status.tmp)
-    rm -f /tmp/attendance_status.tmp
+    # Process the attendance
+    while IFS=, read -r id name department joining_date; do
+        # Skip header line
+        if [ "$id" = "Employee_ID" ]; then
+            continue
+        fi
+        
+        # Determine status
+        status="Absent"
+        for present_id in $present_ids; do
+            present_id=$(echo "$present_id" | tr -d '"')
+            if [ "$id" = "$present_id" ]; then
+                status="Present"
+                break
+            fi
+        done
+        
+        # Remove existing record for this employee on this date if it exists
+        sed -i "/^$attendance_date,$id,/d" "$ATTENDANCE_CSV"
+        
+        # Add the new attendance record
+        echo "$attendance_date,$id,$status" >> "$ATTENDANCE_CSV"
+    done < "$EMPLOYEES_CSV"
     
-    # Record attendance in CSV
-    echo "$today,$emp_id,$status" >> "$ATTENDANCE_CSV"
+    # Clean up
+    rm "$temp_file"
     
-    dialog --title "Success" --msgbox "Attendance marked successfully for $emp_id as $status!" 8 60
+    show_success "Attendance marked successfully for $attendance_date."
 }
 
-# Function to view attendance
-view_attendance() {
-    # Check if there are attendance records
-    if [ $(wc -l < "$ATTENDANCE_CSV") -eq 1 ]; then
-        dialog --title "Attendance Records" --msgbox "No attendance records found!" 8 40
+# Function to view attendance for a specific date
+view_date_attendance() {
+    # Get today's date
+    today=$(date +%Y-%m-%d)
+    
+    # Ask for a specific date
+    attendance_date=$(dialog --title "View Attendance" --inputbox "Enter Date (YYYY-MM-DD):" 8 40 "$today" 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
+    
+    # Validate date format
+    if ! validate_date "$attendance_date"; then
+        show_error "Invalid date format. Please use YYYY-MM-DD."
         return
     fi
     
-    # Create a formatted display of attendance
-    tempfile=$(mktemp)
+    # Check if attendance records exist for this date
+    if ! grep -q "^$attendance_date," "$ATTENDANCE_CSV"; then
+        show_error "No attendance records found for $attendance_date."
+        return
+    fi
     
-    echo "Attendance Records:" > "$tempfile"
-    echo "---------------------------------" >> "$tempfile"
-    echo "Date | Employee ID | Name | Status" >> "$tempfile"
-    echo "---------------------------------" >> "$tempfile"
+    # Create a temporary file for the attendance list
+    temp_file=$(mktemp)
+    echo -e "Date: $attendance_date\n" > "$temp_file"
+    echo -e "ID\tName\tDepartment\tStatus" >> "$temp_file"
+    echo -e "------------------------------------------------------------" >> "$temp_file"
     
-    # Join attendance and employee data to show names
-    tail -n +2 "$ATTENDANCE_CSV" | sort -r | while IFS=, read -r date emp_id status; do
-        emp_name=$(grep "^$emp_id," "$EMPLOYEES_CSV" | cut -d ',' -f 2)
-        # Handle case where employee might be deleted but attendance record exists
-        if [ -z "$emp_name" ]; then
-            emp_name="[Deleted]"
+    # Process each attendance record for the date
+    grep "^$attendance_date," "$ATTENDANCE_CSV" | while IFS=, read -r date id status; do
+        # Get employee details
+        employee_data=$(grep "^$id," "$EMPLOYEES_CSV")
+        
+        if [ -n "$employee_data" ]; then
+            name=$(echo "$employee_data" | awk -F, '{print $2}')
+            department=$(echo "$employee_data" | awk -F, '{print $3}')
+            echo -e "$id\t$name\t$department\t$status" >> "$temp_file"
+        else
+            echo -e "$id\tUnknown\tUnknown\t$status" >> "$temp_file"
         fi
-        printf "%-10s | %-11s | %-15s | %s\n" "$date" "$emp_id" "$emp_name" "$status" >> "$tempfile"
     done
     
-    dialog --title "Attendance Records" --textbox "$tempfile" 20 80
+    # Count present and absent
+    present_count=$(grep "^$attendance_date," "$ATTENDANCE_CSV" | grep -c ",Present$")
+    absent_count=$(grep "^$attendance_date," "$ATTENDANCE_CSV" | grep -c ",Absent$")
+    total_count=$((present_count + absent_count))
     
-    rm -f "$tempfile"
+    echo -e "\n------------------------------------------------------------" >> "$temp_file"
+    echo -e "Summary: Total: $total_count, Present: $present_count, Absent: $absent_count" >> "$temp_file"
+    
+    # Show the attendance list
+    dialog --title "Attendance for $attendance_date" --textbox "$temp_file" 20 80
+    
+    # Clean up
+    rm "$temp_file"
 }
 
 # Function to update attendance
 update_attendance() {
-    # Check if there are attendance records
-    if [ $(wc -l < "$ATTENDANCE_CSV") -eq 1 ]; then
-        dialog --title "Error" --msgbox "No attendance records found!" 8 40
-        return
-    fi
-    
-    # Let user enter date
-    dialog --title "Update Attendance" \
-           --inputbox "Enter date (YYYY-MM-DD):" 8 40 "$(date +%Y-%m-%d)" \
-           2> /tmp/date_selected.tmp
-    
-    if [ $? -ne 0 ]; then
-        rm -f /tmp/date_selected.tmp
-        return
-    fi
-    
-    date_selected=$(cat /tmp/date_selected.tmp)
-    rm -f /tmp/date_selected.tmp
+    # Ask for a specific date
+    today=$(date +%Y-%m-%d)
+    attendance_date=$(dialog --title "Update Attendance" --inputbox "Enter Date (YYYY-MM-DD):" 8 40 "$today" 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
     
     # Validate date format
-    if ! validate_date "$date_selected"; then
-        dialog --title "Error" --msgbox "Invalid date format. Please use YYYY-MM-DD." 8 50
+    if ! validate_date "$attendance_date"; then
+        show_error "Invalid date format. Please use YYYY-MM-DD."
         return
     fi
     
-    # First, let the user select an employee ID
-    select_employee_id
-    
-    # Check if employee was selected
-    if [ ! -f "/tmp/employee_id_selected.tmp" ]; then
+    # Check if attendance records exist for this date
+    if ! grep -q "^$attendance_date," "$ATTENDANCE_CSV"; then
+        show_error "No attendance records found for $attendance_date."
         return
     fi
     
-    emp_id=$(cat /tmp/employee_id_selected.tmp)
-    rm -f /tmp/employee_id_selected.tmp
+    # Create a temporary file for the employee list
+    temp_file=$(mktemp)
     
-    if [ -z "$emp_id" ]; then
-        return
-    fi
+    # Loop through all attendance records for this date
+    grep "^$attendance_date," "$ATTENDANCE_CSV" | while IFS=, read -r date id status; do
+        # Get employee name
+        name=$(grep "^$id," "$EMPLOYEES_CSV" | awk -F, '{print $2}')
+        if [ -z "$name" ]; then
+            name="Unknown"
+        fi
+        
+        # Add to the list
+        echo "$id \"$name - Currently $status\" $status" >> "$temp_file"
+    done
     
-    # Check if attendance exists for this date and employee
-    if ! grep -q "^$date_selected,$emp_id," "$ATTENDANCE_CSV"; then
-        dialog --title "Error" --msgbox "No attendance record found for $emp_id on $date_selected!" 8 60
-        return
-    fi
+    # Use dialog to update attendance with a checklist
+    present_ids=$(dialog --title "Update Attendance for $attendance_date" --checklist "Select present employees:" 15 70 8 --file "$temp_file" 2>&1 >/dev/tty)
     
-    # Get current status
-    current_status=$(grep "^$date_selected,$emp_id," "$ATTENDANCE_CSV" | cut -d ',' -f 3)
-    
-    # Ask for new attendance status
-    dialog --title "Update Attendance" \
-           --menu "Current status for $emp_id on $date_selected: $current_status\nSelect new status:" 15 60 2 \
-           "Present" "Mark as Present" \
-           "Absent" "Mark as Absent" \
-           2> /tmp/attendance_status.tmp
-    
+    # Check if canceled
     if [ $? -ne 0 ]; then
-        rm -f /tmp/attendance_status.tmp
+        rm "$temp_file"
         return
     fi
     
-    status=$(cat /tmp/attendance_status.tmp)
-    rm -f /tmp/attendance_status.tmp
+    # Get all employee IDs with attendance for this date
+    employee_ids=$(grep "^$attendance_date," "$ATTENDANCE_CSV" | cut -d, -f2)
     
-    # Update attendance in CSV
-    sed -i "s|^$date_selected,$emp_id,.*$|$date_selected,$emp_id,$status|" "$ATTENDANCE_CSV"
+    # Process the attendance updates
+    for id in $employee_ids; do
+        # Determine status
+        status="Absent"
+        for present_id in $present_ids; do
+            present_id=$(echo "$present_id" | tr -d '"')
+            if [ "$id" = "$present_id" ]; then
+                status="Present"
+                break
+            fi
+        done
+        
+        # Update the attendance record
+        sed -i "s|^$attendance_date,$id,.*|$attendance_date,$id,$status|" "$ATTENDANCE_CSV"
+    done
     
-    dialog --title "Success" --msgbox "Attendance updated successfully for $emp_id on $date_selected as $status!" 8 70
+    # Clean up
+    rm "$temp_file"
+    
+    show_success "Attendance updated successfully for $attendance_date."
 }
 
 # Function to delete attendance
 delete_attendance() {
-    # Check if there are attendance records
-    if [ $(wc -l < "$ATTENDANCE_CSV") -eq 1 ]; then
-        dialog --title "Error" --msgbox "No attendance records found!" 8 40
-        return
-    fi
-    
-    # Let user enter date
-    dialog --title "Delete Attendance" \
-           --inputbox "Enter date (YYYY-MM-DD):" 8 40 "$(date +%Y-%m-%d)" \
-           2> /tmp/date_selected.tmp
-    
-    if [ $? -ne 0 ]; then
-        rm -f /tmp/date_selected.tmp
-        return
-    fi
-    
-    date_selected=$(cat /tmp/date_selected.tmp)
-    rm -f /tmp/date_selected.tmp
+    # Ask for a specific date
+    today=$(date +%Y-%m-%d)
+    attendance_date=$(dialog --title "Delete Attendance" --inputbox "Enter Date (YYYY-MM-DD):" 8 40 "$today" 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
     
     # Validate date format
-    if ! validate_date "$date_selected"; then
-        dialog --title "Error" --msgbox "Invalid date format. Please use YYYY-MM-DD." 8 50
+    if ! validate_date "$attendance_date"; then
+        show_error "Invalid date format. Please use YYYY-MM-DD."
         return
     fi
     
-    # First, let the user select an employee ID
-    select_employee_id
-    
-    # Check if employee was selected
-    if [ ! -f "/tmp/employee_id_selected.tmp" ]; then
+    # Check if attendance records exist for this date
+    if ! grep -q "^$attendance_date," "$ATTENDANCE_CSV"; then
+        show_error "No attendance records found for $attendance_date."
         return
     fi
     
-    emp_id=$(cat /tmp/employee_id_selected.tmp)
-    rm -f /tmp/employee_id_selected.tmp
-    
-    if [ -z "$emp_id" ]; then
-        return
-    fi
-    
-    # Check if attendance exists for this date and employee
-    if ! grep -q "^$date_selected,$emp_id," "$ATTENDANCE_CSV"; then
-        dialog --title "Error" --msgbox "No attendance record found for $emp_id on $date_selected!" 8 60
-        return
-    fi
-    
-    # Ask for confirmation
-    dialog --title "Confirm Deletion" \
-           --yesno "Are you sure you want to delete attendance record for $emp_id on $date_selected?" 8 75
-    
+    # Confirm deletion
+    dialog --title "Confirm" --yesno "Are you sure you want to delete all attendance records for $attendance_date?" 8 60
     if [ $? -ne 0 ]; then
         return
     fi
     
-    # Delete attendance record from CSV
-    sed -i "/^$date_selected,$emp_id,/d" "$ATTENDANCE_CSV"
+    # Delete all attendance records for this date
+    sed -i "/^$attendance_date,/d" "$ATTENDANCE_CSV"
     
-    dialog --title "Success" --msgbox "Attendance record deleted successfully!" 8 50
+    show_success "Attendance records deleted successfully for $attendance_date."
 }
 
 # Function to view attendance summary
 view_attendance_summary() {
-    # Check if there are attendance records
-    if [ $(wc -l < "$ATTENDANCE_CSV") -eq 1 ]; then
-        dialog --title "Attendance Summary" --msgbox "No attendance records found!" 8 40
+    # Check if there are any attendance records
+    if [ ! -s "$ATTENDANCE_CSV" ] || [ $(wc -l < "$ATTENDANCE_CSV") -le 1 ]; then
+        show_error "No attendance records found."
         return
     fi
     
-    # Create a formatted summary of attendance
-    tempfile=$(mktemp)
+    # Create a temporary file for the summary
+    temp_file=$(mktemp)
+    echo -e "Attendance Summary\n" > "$temp_file"
+    echo -e "ID\tName\tDepartment\tPresent\tAbsent\tTotal\tPercentage" >> "$temp_file"
+    echo -e "------------------------------------------------------------" >> "$temp_file"
     
-    echo "Attendance Summary:" > "$tempfile"
-    echo "----------------------------------------" >> "$tempfile"
-    echo "Employee ID | Name | Present | Absent | Total" >> "$tempfile"
-    echo "----------------------------------------" >> "$tempfile"
+    # Get unique employee IDs from attendance records
+    employee_ids=$(tail -n +2 "$ATTENDANCE_CSV" | cut -d, -f2 | sort -u)
     
-    # Process employees one by one
-    tail -n +2 "$EMPLOYEES_CSV" | while IFS=, read -r emp_id name department joining_date; do
-        # Count present days
-        present_count=$(grep "^[0-9-]*,$emp_id,Present" "$ATTENDANCE_CSV" | wc -l)
+    # Process each employee
+    for id in $employee_ids; do
+        # Get employee details
+        employee_data=$(grep "^$id," "$EMPLOYEES_CSV")
         
-        # Count absent days
-        absent_count=$(grep "^[0-9-]*,$emp_id,Absent" "$ATTENDANCE_CSV" | wc -l)
+        if [ -n "$employee_data" ]; then
+            name=$(echo "$employee_data" | awk -F, '{print $2}')
+            department=$(echo "$employee_data" | awk -F, '{print $3}')
+        else
+            name="Unknown"
+            department="Unknown"
+        fi
         
-        # Calculate total
-        total=$((present_count + absent_count))
+        # Count present and absent
+        present_count=$(grep -c "^[^,]*,$id,Present$" "$ATTENDANCE_CSV")
+        absent_count=$(grep -c "^[^,]*,$id,Absent$" "$ATTENDANCE_CSV")
+        total_count=$((present_count + absent_count))
         
-        printf "%-12s | %-15s | %-7s | %-6s | %s\n" "$emp_id" "$name" "$present_count" "$absent_count" "$total" >> "$tempfile"
+        # Calculate percentage
+        if [ $total_count -gt 0 ]; then
+            percentage=$((present_count * 100 / total_count))
+        else
+            percentage=0
+        fi
+        
+        echo -e "$id\t$name\t$department\t$present_count\t$absent_count\t$total_count\t$percentage%" >> "$temp_file"
     done
     
-    dialog --title "Attendance Summary" --textbox "$tempfile" 20 80
+    # Show the summary
+    dialog --title "Attendance Summary" --textbox "$temp_file" 20 80
     
-    rm -f "$tempfile"
+    # Clean up
+    rm "$temp_file"
 }
 
-# Function to view attendance on a specific date
-attendance_on_date() {
-    # Let user enter date
-    dialog --title "Attendance by Date" \
-           --inputbox "Enter date (YYYY-MM-DD):" 8 40 "$(date +%Y-%m-%d)" \
-           2> /tmp/date_selected.tmp
+# Function to search employee
+search_employee() {
+    # Get search term
+    search_term=$(dialog --title "Search Employee" --inputbox "Enter search term (ID, Name, or Department):" 8 40 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
     
-    if [ $? -ne 0 ]; then
-        rm -f /tmp/date_selected.tmp
+    # Check if employees.csv exists and has data
+    if [ ! -s "$EMPLOYEES_CSV" ] || [ $(wc -l < "$EMPLOYEES_CSV") -le 1 ]; then
+        show_error "No employees found."
         return
     fi
     
-    date_selected=$(cat /tmp/date_selected.tmp)
-    rm -f /tmp/date_selected.tmp
+    # Create a temporary file for search results
+    temp_file=$(mktemp)
+    echo -e "Search Results for: \"$search_term\"\n" > "$temp_file"
+    echo -e "ID\tName\tDepartment\tJoining Date" >> "$temp_file"
+    echo -e "------------------------------------------------------------" >> "$temp_file"
+    
+    # Search for matches in employees.csv (case-insensitive)
+    grep -i "$search_term" "$EMPLOYEES_CSV" | while IFS=, read -r id name department joining_date; do
+        # Skip header line
+        if [ "$id" = "Employee_ID" ]; then
+            continue
+        fi
+        
+        echo -e "$id\t$name\t$department\t$joining_date" >> "$temp_file"
+    done
+    
+    # Count results
+    result_count=$(grep -c -v "^Search\|^ID\|^------" "$temp_file")
+    
+    if [ $result_count -eq 0 ]; then
+        show_error "No matching employees found."
+        rm "$temp_file"
+        return
+    fi
+    
+    # Add result count to the output
+    echo -e "\nTotal Results: $result_count" >> "$temp_file"
+    
+    # Show search results
+    dialog --title "Employee Search Results" --textbox "$temp_file" 20 80
+    
+    # Clean up
+    rm "$temp_file"
+}
+
+# Function to search attendance
+search_attendance() {
+    # Get search date range
+    start_date=$(dialog --title "Search Attendance" --inputbox "Enter Start Date (YYYY-MM-DD):" 8 40 "$(date -d '30 days ago' +%Y-%m-%d)" 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
     
     # Validate date format
-    if ! validate_date "$date_selected"; then
-        dialog --title "Error" --msgbox "Invalid date format. Please use YYYY-MM-DD." 8 50
+    if ! validate_date "$start_date"; then
+        show_error "Invalid date format. Please use YYYY-MM-DD."
         return
     fi
     
-    # Check if there are attendance records for this date
-    if ! grep -q "^$date_selected," "$ATTENDANCE_CSV"; then
-        dialog --title "Attendance Records" --msgbox "No attendance records found for $date_selected!" 8 55
+    end_date=$(dialog --title "Search Attendance" --inputbox "Enter End Date (YYYY-MM-DD):" 8 40 "$(date +%Y-%m-%d)" 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
+    
+    # Validate date format
+    if ! validate_date "$end_date"; then
+        show_error "Invalid date format. Please use YYYY-MM-DD."
         return
     fi
     
-    # Create a formatted display of attendance for this date
-    tempfile=$(mktemp)
+    # Get employee ID (optional)
+    employee_id=$(dialog --title "Search Attendance" --inputbox "Enter Employee ID (leave blank for all employees):" 8 40 2>&1 >/dev/tty)
+    if [ $? -ne 0 ]; then return; fi
     
-    echo "Attendance for $date_selected:" > "$tempfile"
-    echo "--------------------------------" >> "$tempfile"
-    echo "Employee ID | Name | Status" >> "$tempfile"
-    echo "--------------------------------" >> "$tempfile"
-    
-    # Join attendance and employee data to show names
-    grep "^$date_selected," "$ATTENDANCE_CSV" | while IFS=, read -r date emp_id status; do
-        emp_name=$(grep "^$emp_id," "$EMPLOYEES_CSV" | cut -d ',' -f 2)
-        # Handle case where employee might be deleted but attendance record exists
-        if [ -z "$emp_name" ]; then
-            emp_name="[Deleted]"
+    # Create a temporary file for search results
+    temp_file=$(mktemp)
+    echo -e "Attendance Search Results\n" > "$temp_file"
+    echo -e "Date Range: $start_date to $end_date" >> "$temp_file"
+    if [ -n "$employee_id" ]; then
+        # Validate employee ID if provided
+        if ! validate_employee_id "$employee_id"; then
+            show_error "Invalid Employee ID. Please enter a numeric value."
+            rm "$temp_file"
+            return
         fi
-        printf "%-12s | %-15s | %s\n" "$emp_id" "$emp_name" "$status" >> "$tempfile"
-    done
-    
-    dialog --title "Attendance for $date_selected" --textbox "$tempfile" 20 70
-    
-    rm -f "$tempfile"
-}
-
-# Function to search for an employee
-search_employee() {
-    # Let user enter search term
-    dialog --title "Search Employee" \
-           --inputbox "Enter employee ID or name to search:" 8 50 \
-           2> /tmp/search_term.tmp
-    
-    if [ $? -ne 0 ]; then
-        rm -f /tmp/search_term.tmp
-        return
-    fi
-    
-    search_term=$(cat /tmp/search_term.tmp)
-    rm -f /tmp/search_term.tmp
-    
-    if [ -z "$search_term" ]; then
-        dialog --title "Error" --msgbox "Search term cannot be empty!" 8 40
-        return
-    fi
-    
-    # Search in employees.csv
-    result=$(grep -i "$search_term" "$EMPLOYEES_CSV" | grep -v "^EmployeeID")
-    
-    if [ -z "$result" ]; then
-        dialog --title "Search Results" --msgbox "No matching employees found!" 8 40
-        return
-    fi
-    
-    # Create a formatted display of search results
-    tempfile=$(mktemp)
-    
-    echo "Search Results for '$search_term':" > "$tempfile"
-    echo "----------------------------------" >> "$tempfile"
-    echo "ID | Name | Department | Joining Date" >> "$tempfile"
-    echo "----------------------------------" >> "$tempfile"
-    
-    echo "$result" | awk -F, '{printf "%-8s | %-15s | %-15s | %s\n", $1, $2, $3, $4}' >> "$tempfile"
-    
-    dialog --title "Search Results" --textbox "$tempfile" 20 80
-    
-    rm -f "$tempfile"
-}
-
-# Function to search attendance records
-search_attendance() {
-    # Let user enter search term
-    dialog --title "Search Attendance" \
-           --inputbox "Enter employee ID to search attendance:" 8 50 \
-           2> /tmp/search_term.tmp
-    
-    if [ $? -ne 0 ]; then
-        rm -f /tmp/search_term.tmp
-        return
-    fi
-    
-    search_term=$(cat /tmp/search_term.tmp)
-    rm -f /tmp/search_term.tmp
-    
-    if [ -z "$search_term" ]; then
-        dialog --title "Error" --msgbox "Search term cannot be empty!" 8 40
-        return
-    fi
-    
-    # Check if employee exists
-    if ! employee_exists "$search_term"; then
-        dialog --title "Error" --msgbox "Employee ID not found!" 8 40
-        return
-    fi
-    
-    # Search in attendance.csv
-    result=$(grep ",$search_term," "$ATTENDANCE_CSV")
-    
-    if [ -z "$result" ]; then
-        dialog --title "Search Results" --msgbox "No attendance records found for this employee!" 8 60
-        return
-    fi
-    
-    # Get employee name
-    emp_name=$(grep "^$search_term," "$EMPLOYEES_CSV" | cut -d ',' -f 2)
-    
-    # Create a formatted display of search results
-    tempfile=$(mktemp)
-    
-    echo "Attendance Records for $search_term ($emp_name):" > "$tempfile"
-    echo "----------------------------" >> "$tempfile"
-    echo "Date | Status" >> "$tempfile"
-    echo "----------------------------" >> "$tempfile"
-    
-    echo "$result" | sort -r | awk -F, '{printf "%-10s | %s\n", $1, $3}' >> "$tempfile"
-    
-    dialog --title "Attendance Search Results" --textbox "$tempfile" 20 70
-    
-    rm -f "$tempfile"
-}
-
-# Main function - display menu and handle user choices
-main() {
-    while true; do
-        choice=$(dialog --clear --title "Employee Attendance Tracker" \
-                        --menu "Select an option:" 20 60 13 \
-                        "1" "Add Employee" \
-                        "2" "Update Employee Details" \
-                        "3" "Delete Employee" \
-                        "4" "View Employee List" \
-                        "5" "Mark Attendance" \
-                        "6" "View Attendance" \
-                        "7" "Update Attendance" \
-                        "8" "Delete Attendance" \
-                        "9" "View Attendance Summary" \
-                        "10" "Attendance on Specific Date" \
-                        "11" "Search Employee" \
-                        "12" "Search Attendance" \
-                        "13" "Exit" \
-                        3>&1 1>&2 2>&3)
         
-        # Exit if Cancel is pressed
+        # Get employee name
+        employee_name=$(grep "^$employee_id," "$EMPLOYEES_CSV" | awk -F, '{print $2}')
+        if [ -z "$employee_name" ]; then
+            employee_name="Unknown"
+        fi
+        echo -e "Employee: $employee_id - $employee_name\n" >> "$temp_file"
+    else
+        echo -e "Employee: All\n" >> "$temp_file"
+    fi
+    
+    echo -e "Date\tID\tName\tDepartment\tStatus" >> "$temp_file"
+    echo -e "------------------------------------------------------------" >> "$temp_file"
+    
+    # Process each line in attendance.csv
+    while IFS=, read -r date id status; do
+        # Skip header line
+        if [ "$date" = "Date" ]; then
+            continue
+        fi
+        
+        # Check if date is within range
+        if [[ "$date" < "$start_date" || "$date" > "$end_date" ]]; then
+            continue
+        fi
+        
+        # Check employee ID if specified
+        if [ -n "$employee_id" ] && [ "$id" != "$employee_id" ]; then
+            continue
+        fi
+        
+        # Get employee details
+        employee_data=$(grep "^$id," "$EMPLOYEES_CSV")
+        
+        if [ -n "$employee_data" ]; then
+            name=$(echo "$employee_data" | awk -F, '{print $2}')
+            department=$(echo "$employee_data" | awk -F, '{print $3}')
+        else
+            name="Unknown"
+            department="Unknown"
+        fi
+        
+        echo -e "$date\t$id\t$name\t$department\t$status" >> "$temp_file"
+    done < "$ATTENDANCE_CSV"
+    
+    # Count results
+    result_count=$(grep -c -v "^Attendance\|^Date Range\|^Employee:\|^Date\t\|^------" "$temp_file")
+    
+    if [ $result_count -eq 0 ]; then
+        show_error "No matching attendance records found."
+        rm "$temp_file"
+        return
+    fi
+    
+    # Count present and absent
+    present_count=$(grep -c "Present$" "$temp_file")
+    absent_count=$(grep -c "Absent$" "$temp_file")
+    
+    # Add summary to the output
+    echo -e "\n------------------------------------------------------------" >> "$temp_file"
+    echo -e "Summary: Total Records: $result_count, Present: $present_count, Absent: $absent_count" >> "$temp_file"
+    
+    # Show search results
+    dialog --title "Attendance Search Results" --textbox "$temp_file" 20 80
+    
+    # Clean up
+    rm "$temp_file"
+}
+
+# Main function - display the main menu
+main_menu() {
+    while true; do
+        # Display the main menu
+        choice=$(dialog --title "Employee Attendance Tracker" --menu "Select an option:" 18 60 10 \
+            1 "Add Employee" \
+            2 "Update Employee" \
+            3 "Delete Employee" \
+            4 "View Employee List" \
+            5 "Mark Attendance" \
+            6 "View Attendance for Date" \
+            7 "Update Attendance" \
+            8 "Delete Attendance" \
+            9 "View Attendance Summary" \
+            10 "Search Employee" \
+            11 "Search Attendance" \
+            12 "Exit" 2>&1 >/dev/tty)
+        
+        # Check if user pressed Cancel or ESC
         if [ $? -ne 0 ]; then
-            clear
-            echo "Goodbye!"
             exit 0
         fi
         
+        # Process the user's choice
         case $choice in
             1) add_employee ;;
             2) update_employee ;;
             3) delete_employee ;;
             4) view_employee_list ;;
             5) mark_attendance ;;
-            6) view_attendance ;;
+            6) view_date_attendance ;;
             7) update_attendance ;;
             8) delete_attendance ;;
             9) view_attendance_summary ;;
-            10) attendance_on_date ;;
-            11) search_employee ;;
-            12) search_attendance ;;
-            13) clear
+            10) search_employee ;;
+            11) search_attendance ;;
+            12) 
+                clear
                 echo "Thank you for using Employee Attendance Tracker!"
                 exit 0
                 ;;
@@ -705,5 +715,8 @@ main() {
     done
 }
 
-# Start the program
-main
+# Initialize CSV files
+initialize_files
+
+# Start the application
+main_menu
